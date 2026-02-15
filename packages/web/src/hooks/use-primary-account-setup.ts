@@ -9,7 +9,12 @@ import Safe, {
   type SafeDeploymentConfig,
 } from '@safe-global/protocol-kit';
 import { base } from 'viem/chains';
-import { type Address, encodeAbiParameters, encodeFunctionData } from 'viem';
+import {
+  type Address,
+  encodeAbiParameters,
+  encodeFunctionData,
+  keccak256,
+} from 'viem';
 import { createPublicClient, http } from 'viem';
 import type { MetaTransactionData } from '@safe-global/safe-core-sdk-types';
 import {
@@ -66,10 +71,18 @@ const INITIAL_PROGRESS: SetupProgressItem[] = [
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function getPrimarySafeSaltNonce(ownerAddress: Address) {
+  // Deterministic salt nonce so onboarding is retry-safe.
+  // Must be parseable by BigInt, so return a decimal string.
+  const seed = `0finance:primary:${ownerAddress.toLowerCase()}`;
+  const hash = keccak256(new TextEncoder().encode(seed));
+  return BigInt(hash).toString();
+}
+
 async function waitUntilDeployed(addr: Address) {
   const publicClient = createPublicClient({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          chain: base as any,
+    chain: base as any,
     transport: http(process.env.NEXT_PUBLIC_BASE_RPC_URL as string),
   });
 
@@ -183,8 +196,10 @@ export function usePrimaryAccountSetup() {
         threshold: 1,
       };
 
+      const saltNonce = getPrimarySafeSaltNonce(ownerAddress);
+
       const safeDeploymentConfig: SafeDeploymentConfig = {
-        saltNonce: Date.now().toString(),
+        saltNonce,
         safeVersion: SAFE_VERSION,
       };
 
@@ -197,23 +212,67 @@ export function usePrimaryAccountSetup() {
       });
 
       const predictedSafeAddress = (await protocolKit.getAddress()) as Address;
+
+      const publicClient = createPublicClient({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        chain: base as any,
+        transport: http(process.env.NEXT_PUBLIC_BASE_RPC_URL as string),
+      });
+
+      // If the Safe is already deployed (e.g., previous attempt succeeded but DB write
+      // was interrupted), just persist it and continue.
+      try {
+        const code = await publicClient.getBytecode({
+          address: predictedSafeAddress,
+        });
+        if (code && code !== '0x') {
+          await completeOnboardingMutation.mutateAsync({
+            primarySafeAddress: predictedSafeAddress,
+          });
+          updateStep('primarySafe', { status: 'success' });
+          return predictedSafeAddress;
+        }
+      } catch {
+        // If RPC fails, proceed with deployment attempt.
+      }
+
       const deploymentTransaction =
         await protocolKit.createSafeDeploymentTransaction();
 
-      await smartWalletClient.sendTransaction(
-        {
-          to: deploymentTransaction.to as Address,
-          value: BigInt(deploymentTransaction.value || '0'),
-          data: deploymentTransaction.data as `0x${string}`,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          chain: base as any,
-        },
-        {
-          uiOptions: {
-            showWalletUIs: false,
+      try {
+        await smartWalletClient.sendTransaction(
+          {
+            to: deploymentTransaction.to as Address,
+            value: BigInt(deploymentTransaction.value || '0'),
+            data: deploymentTransaction.data as `0x${string}`,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            chain: base as any,
           },
-        },
-      );
+          {
+            uiOptions: {
+              showWalletUIs: false,
+            },
+          },
+        );
+      } catch (err) {
+        // If the send failed because the Safe was already created, treat it as success.
+        try {
+          const code = await publicClient.getBytecode({
+            address: predictedSafeAddress,
+          });
+          if (code && code !== '0x') {
+            await completeOnboardingMutation.mutateAsync({
+              primarySafeAddress: predictedSafeAddress,
+            });
+            updateStep('primarySafe', { status: 'success' });
+            return predictedSafeAddress;
+          }
+        } catch {
+          // ignore
+        }
+
+        throw err;
+      }
 
       await waitUntilDeployed(predictedSafeAddress);
 

@@ -1,10 +1,22 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { usePrivy } from '@privy-io/react-auth';
-import { CheckCircle2, Copy, Loader2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Copy,
+  Loader2,
+  Circle,
+} from 'lucide-react';
+
+import { EnsureEmbeddedWallet } from '@/components/auth/ensure-embedded-wallet';
+import {
+  usePrimaryAccountSetup,
+  type StepStatus,
+} from '@/hooks/use-primary-account-setup';
 
 export default function CliConnectClient() {
   const { authenticated } = usePrivy();
@@ -12,10 +24,19 @@ export default function CliConnectClient() {
   const redirectUri = searchParams.get('redirect_uri');
   const state = searchParams.get('state');
 
+  const startedRef = useRef(false);
+
+  const {
+    progress,
+    error: setupError,
+    runSetup,
+    reset: resetSetup,
+  } = usePrimaryAccountSetup();
+
   const [apiKey, setApiKey] = useState<string | null>(null);
-  const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>(
-    'idle',
-  );
+  const [status, setStatus] = useState<
+    'idle' | 'setting_up' | 'creating_key' | 'ready' | 'error'
+  >('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [autoSent, setAutoSent] = useState(false);
 
@@ -26,31 +47,60 @@ export default function CliConnectClient() {
   }, [searchParams]);
 
   useEffect(() => {
-    if (!authenticated || status !== 'idle') {
+    if (!authenticated) {
+      startedRef.current = false;
+      setApiKey(null);
+      setStatus('idle');
+      setErrorMessage(null);
+      setAutoSent(false);
       return;
     }
 
-    setStatus('loading');
+    if (startedRef.current || status !== 'idle') {
+      return;
+    }
 
-    fetch('/api/cli-auth', { method: 'POST' })
-      .then(async (response) => {
+    startedRef.current = true;
+    let cancelled = false;
+
+    async function connect() {
+      setErrorMessage(null);
+      setAutoSent(false);
+      setApiKey(null);
+
+      try {
+        setStatus('setting_up');
+        await runSetup();
+
+        setStatus('creating_key');
+        const response = await fetch('/api/cli-auth', { method: 'POST' });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));
           throw new Error(payload.error || 'Failed to create API key');
         }
-        return response.json();
-      })
-      .then((payload) => {
+
+        const payload = await response.json();
+        if (cancelled) return;
+
         setApiKey(payload.apiKey ?? null);
         setStatus('ready');
-      })
-      .catch((error) => {
-        setErrorMessage(
-          error instanceof Error ? error.message : 'Unknown error',
-        );
+      } catch (error) {
+        if (cancelled) return;
+        const message =
+          error instanceof Error
+            ? error.message
+            : setupError || 'Unknown error';
+        setErrorMessage(message);
         setStatus('error');
-      });
-  }, [authenticated, status]);
+      }
+    }
+
+    void connect();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authenticated, runSetup, setupError, status]);
 
   useEffect(() => {
     if (!apiKey || !redirectUri) {
@@ -75,6 +125,7 @@ export default function CliConnectClient() {
   return (
     <div className="min-h-screen bg-[#F7F7F2] flex items-center justify-center px-4">
       <div className="w-full max-w-[520px] rounded-lg border border-[#101010]/10 bg-white p-6">
+        <EnsureEmbeddedWallet />
         <p className="uppercase tracking-[0.16em] text-[11px] text-[#101010]/60">
           CLI Connect
         </p>
@@ -97,7 +148,56 @@ export default function CliConnectClient() {
           </div>
         ) : null}
 
-        {authenticated && status === 'loading' ? (
+        {authenticated && status === 'setting_up' ? (
+          <div className="mt-6 space-y-4">
+            <div className="flex items-center gap-3 text-[14px] text-[#101010]/70">
+              <Loader2 className="h-4 w-4 animate-spin text-[#1B29FF]" />
+              Setting up your account…
+            </div>
+            <ul className="space-y-3">
+              {progress.map((item) => (
+                <li key={item.step} className="flex items-start gap-3">
+                  <div className="mt-0.5">
+                    {(() => {
+                      const s = item.status as StepStatus;
+                      if (s === 'success') {
+                        return (
+                          <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        );
+                      }
+                      if (s === 'in_progress') {
+                        return (
+                          <Loader2 className="h-4 w-4 animate-spin text-[#1B29FF]" />
+                        );
+                      }
+                      if (s === 'error') {
+                        return (
+                          <AlertTriangle className="h-4 w-4 text-red-500" />
+                        );
+                      }
+                      return <Circle className="h-4 w-4 text-[#101010]/20" />;
+                    })()}
+                  </div>
+                  <div>
+                    <p className="text-[13px] font-medium text-[#101010]">
+                      {item.label}
+                    </p>
+                    {item.detail ? (
+                      <p className="text-[12px] text-[#101010]/60 mt-0.5">
+                        {item.detail}
+                      </p>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <p className="text-[12px] text-[#101010]/60">
+              Keep this tab open until the CLI finishes connecting.
+            </p>
+          </div>
+        ) : null}
+
+        {authenticated && status === 'creating_key' ? (
           <div className="mt-6 flex items-center gap-3 text-[14px] text-[#101010]/70">
             <Loader2 className="h-4 w-4 animate-spin text-[#1B29FF]" />
             Generating a secure API key…
@@ -107,6 +207,27 @@ export default function CliConnectClient() {
         {authenticated && status === 'error' ? (
           <div className="mt-6 rounded-md border border-red-200 bg-red-50 p-3 text-[13px] text-red-700">
             {errorMessage || 'Something went wrong. Please try again.'}
+            {setupError ? (
+              <div className="mt-2 text-[12px] text-red-700/80">
+                {setupError}
+              </div>
+            ) : null}
+            <div className="mt-3">
+              <button
+                type="button"
+                className="inline-flex items-center rounded-md border border-red-200 bg-white px-3 py-2 text-[13px] font-medium text-red-700 hover:bg-red-50 transition-colors"
+                onClick={() => {
+                  startedRef.current = false;
+                  resetSetup();
+                  setApiKey(null);
+                  setAutoSent(false);
+                  setErrorMessage(null);
+                  setStatus('idle');
+                }}
+              >
+                Retry
+              </button>
+            </div>
           </div>
         ) : null}
 

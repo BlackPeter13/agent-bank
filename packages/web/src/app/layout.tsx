@@ -10,21 +10,22 @@ import type { Metadata } from 'next';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: '0 Finance - Your bank earns 5%+ on your deposits. You get 0.5%.',
+  title: '0 Finance - AI-powered finance, on autopilot',
   description:
-    'Keep the difference. Competitive yield, instant withdrawals, $1M insurance. Open US or EU accounts in seconds.',
+    'Stop doing finance manually. Forward invoices and receipts, approve payments, and automate bank transfers with an AI that asks before executing. Install the agent-bank CLI and connect via MCP.',
   keywords: [
-    'startup treasury',
-    'high yield savings',
-    'business banking',
-    'competitive yield',
-    'instant withdrawals',
-    'insurance coverage',
-    'US bank account',
-    'EU bank account',
-    'IBAN',
-    'ACH',
-    'SEPA',
+    'ai finance',
+    'agent banking',
+    'finance automation',
+    'invoices',
+    'expense tracking',
+    'bank transfers',
+    'approvals',
+    'mcp',
+    'cli',
+    'agent-bank',
+    'open banking',
+    'treasury',
   ],
   authors: [{ name: '0 Finance' }],
   creator: '0 Finance',
@@ -50,9 +51,9 @@ export const metadata: Metadata = {
     ],
   },
   openGraph: {
-    title: '0 Finance - Your bank earns 5%+ on your deposits. You get 0.5%.',
+    title: '0 Finance - AI-powered finance, on autopilot',
     description:
-      'Keep the difference. Competitive yield, instant withdrawals, $1M insurance. Open US or EU accounts in seconds.',
+      'Forward invoices and receipts, approve payments, and automate transfers with an AI that asks before executing. CLI + MCP included.',
     url: 'https://0.finance',
     siteName: '0 Finance',
     images: [
@@ -60,7 +61,7 @@ export const metadata: Metadata = {
         url: 'https://0.finance/opengraph-image.png',
         width: 1200,
         height: 630,
-        alt: '0 Finance - Your bank earns 5%+ on your deposits. You get 0.5%.',
+        alt: '0 Finance - AI-powered finance, on autopilot',
       },
     ],
     locale: 'en_US',
@@ -68,9 +69,9 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: '0 Finance - Your bank earns 5%+ on your deposits. You get 0.5%.',
+    title: '0 Finance - AI-powered finance, on autopilot',
     description:
-      'Keep the difference. Competitive yield, instant withdrawals, $1M insurance. Open US or EU accounts in seconds.',
+      'Forward invoices and receipts, approve payments, and automate transfers with an AI that asks before executing. CLI + MCP included.',
     site: '@0finance',
     creator: '@0finance',
     images: ['https://0.finance/opengraph-image.png'],

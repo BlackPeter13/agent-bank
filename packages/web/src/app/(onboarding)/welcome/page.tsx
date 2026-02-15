@@ -1,60 +1,75 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { usePrivy } from '@privy-io/react-auth';
-import { api } from '@/trpc/react';
 import {
-  Loader2,
-  ArrowRight,
-  CheckCircle2,
   AlertTriangle,
-  Circle,
-  Banknote,
-  Cpu,
-  Mail,
-  Copy,
+  ArrowRight,
   Check,
+  CheckCircle2,
+  Circle,
+  Copy,
+  Loader2,
+  Mail,
 } from 'lucide-react';
+import { toast } from 'sonner';
+
 import GeneratedComponent from '@/app/(landing)/welcome-gradient';
-import { cn } from '@/lib/utils';
 import { EnsureEmbeddedWallet } from '@/components/auth/ensure-embedded-wallet';
 import {
   StepStatus,
   usePrimaryAccountSetup,
 } from '@/hooks/use-primary-account-setup';
-import { toast } from 'sonner';
+import { api } from '@/trpc/react';
+
+const PERSONAL_EMAIL_DOMAINS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'yahoo.com',
+  'outlook.com',
+  'hotmail.com',
+  'icloud.com',
+  'proton.me',
+  'protonmail.com',
+]);
+
+function toTitleCase(input: string) {
+  if (!input) return input;
+  return input.charAt(0).toUpperCase() + input.slice(1);
+}
+
+function suggestWorkspaceName(email: string | null | undefined) {
+  if (!email) return 'Personal Workspace';
+  const parts = email.toLowerCase().split('@');
+  if (parts.length !== 2) return 'Personal Workspace';
+
+  const domain = parts[1];
+  if (!domain || PERSONAL_EMAIL_DOMAINS.has(domain)) {
+    return 'Personal Workspace';
+  }
+
+  const base = domain.split('.')[0];
+  if (!base) return 'Personal Workspace';
+  return `${toTitleCase(base)} Workspace`;
+}
 
 export default function WelcomePage() {
   const router = useRouter();
   const { user, ready, authenticated } = usePrivy();
-  const [workspaceName, setWorkspaceName] = useState('');
+
+  const startedRef = useRef(false);
+  const [setupAttempt, setSetupAttempt] = useState(0);
   const [workspaceStatus, setWorkspaceStatus] = useState<StepStatus>('pending');
-  const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [isSetupComplete, setIsSetupComplete] = useState(false);
   const [showAiEmailIntro, setShowAiEmailIntro] = useState(false);
-  const [fundingMode, setFundingMode] = useState<'bank' | 'crypto'>('bank');
   const [copiedEmail, setCopiedEmail] = useState(false);
 
   const { data: workspaceData, isLoading: workspaceLoading } =
     api.workspace.getOrCreateWorkspaceV2.useQuery(undefined, {
       enabled: ready && authenticated,
     });
-
-  // Fetch AI email address after setup completes
-  const { data: aiEmailData } = api.workspace.getAiEmailAddress.useQuery(
-    { workspaceId: workspaceData?.workspaceId ?? '' },
-    { enabled: !!workspaceData?.workspaceId && isSetupComplete },
-  );
-
-  const handleCopyEmail = async () => {
-    if (aiEmailData?.email) {
-      await navigator.clipboard.writeText(aiEmailData.email);
-      setCopiedEmail(true);
-      toast.success('Email address copied!');
-      setTimeout(() => setCopiedEmail(false), 2000);
-    }
-  };
 
   const updateCompanyMutation = api.workspace.updateCompanyName.useMutation();
   const {
@@ -67,85 +82,113 @@ export default function WelcomePage() {
 
   const isProcessing = updateCompanyMutation.isPending || isSettingUp;
 
+  // Fetch AI email address after setup completes (non-blocking).
+  const { data: aiEmailData } = api.workspace.getAiEmailAddress.useQuery(
+    { workspaceId: workspaceData?.workspaceId ?? '' },
+    { enabled: !!workspaceData?.workspaceId && showAiEmailIntro },
+  );
+
   useEffect(() => {
-    // Only redirect if not authenticated
     if (ready && !authenticated) {
       router.push('/signin');
     }
   }, [ready, authenticated, router]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Default bimodal mode to non-technical unless the user already chose.
+  useEffect(() => {
+    if (!ready || !authenticated) return;
+    try {
+      const existing = localStorage.getItem('zero-finance-bimodal-mode');
+      if (existing === null) {
+        localStorage.setItem('zero-finance-bimodal-mode', 'false');
+      }
+    } catch {
+      // ignore
+    }
+  }, [ready, authenticated]);
 
-    if (!workspaceName.trim() || !workspaceData?.workspaceId) {
-      return;
+  useEffect(() => {
+    if (!ready || !authenticated || workspaceLoading) return;
+    const workspaceId = workspaceData?.workspaceId;
+    const currentName = workspaceData?.workspace?.name;
+    if (!workspaceId) return;
+    const ensuredWorkspaceId = workspaceId;
+    if (startedRef.current) return;
+
+    startedRef.current = true;
+
+    async function runAutopilotSetup() {
+      setWorkspaceStatus('in_progress');
+
+      const userEmail =
+        user?.email?.address ?? user?.google?.email ?? undefined;
+      const userName =
+        user?.google?.name || userEmail?.split('@')[0] || 'Unknown';
+      const suggestedName = suggestWorkspaceName(userEmail);
+
+      try {
+        // Only rename if this is still the default.
+        if (currentName === 'Personal Workspace' && suggestedName) {
+          await updateCompanyMutation.mutateAsync({
+            workspaceId: ensuredWorkspaceId,
+            companyName: suggestedName,
+            userName,
+            userEmail,
+          });
+        }
+
+        setWorkspaceStatus('success');
+      } catch (error) {
+        console.error('Failed to update workspace name:', error);
+        // Non-fatal: continue onboarding even if workspace naming fails.
+        setWorkspaceStatus('error');
+      }
+
+      try {
+        await runSetup();
+        setIsSetupComplete(true);
+        setShowAiEmailIntro(true);
+      } catch (error) {
+        console.error('Primary account setup failed:', error);
+      }
     }
 
-    setSubmissionError(null);
-    setWorkspaceStatus('in_progress');
+    void runAutopilotSetup();
+  }, [
+    ready,
+    authenticated,
+    workspaceLoading,
+    workspaceData?.workspaceId,
+    workspaceData?.workspace?.name,
+    setupAttempt,
+    runSetup,
+    updateCompanyMutation,
+    user,
+  ]);
 
-    // Save the funding mode preference to localStorage
-    try {
-      const isTechnical = fundingMode === 'crypto';
-      localStorage.setItem('zero-finance-bimodal-mode', String(isTechnical));
-    } catch (e) {
-      // localStorage not available, continue anyway
-    }
-
-    try {
-      await updateCompanyMutation.mutateAsync({
-        workspaceId: workspaceData.workspaceId,
-        companyName: workspaceName.trim(),
-        userName: user?.google?.name || user?.email?.address?.split('@')[0],
-        userEmail: user?.email?.address || user?.google?.email,
-      });
-      setWorkspaceStatus('success');
-    } catch (error) {
-      console.error('Failed to update workspace name:', error);
-      const message =
-        error instanceof Error ? error.message : 'Something went wrong.';
-      setSubmissionError(message);
-      setWorkspaceStatus('error');
-      return;
-    }
-
-    try {
-      await runSetup();
-      setIsSetupComplete(true);
-      setShowAiEmailIntro(true);
-    } catch (error) {
-      console.error('Primary account setup failed:', error);
-    }
-  };
-
-  const handleContinueToDashboard = () => {
-    router.push('/dashboard');
-  };
-
-  const handleRetry = async () => {
-    setSubmissionError(null);
-    setWorkspaceStatus('success');
-    reset();
-    try {
-      await runSetup();
-      setIsSetupComplete(true);
+  useEffect(() => {
+    if (!showAiEmailIntro) return;
+    const t = window.setTimeout(() => {
       router.push('/dashboard');
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Something went wrong.';
-      setSubmissionError(message);
-    }
+    }, 1800);
+    return () => window.clearTimeout(t);
+  }, [showAiEmailIntro, router]);
+
+  const handleCopyEmail = async () => {
+    if (!aiEmailData?.email) return;
+    await navigator.clipboard.writeText(aiEmailData.email);
+    setCopiedEmail(true);
+    toast.success('AI inbox copied');
+    window.setTimeout(() => setCopiedEmail(false), 2000);
   };
 
   const statusItems = useMemo(() => {
+    const workspaceName = workspaceData?.workspace?.name;
     return [
       {
-        title: 'Save workspace details',
+        title: 'Preparing your workspace',
         status: workspaceStatus,
-        detail:
-          workspaceStatus === 'success'
-            ? `Workspace set to ${workspaceName.trim()}`
-            : undefined,
+        detail: workspaceName ? `Workspace: ${workspaceName}` : undefined,
       },
       ...progress.map((item) => ({
         title: item.label,
@@ -153,17 +196,7 @@ export default function WelcomePage() {
         detail: item.detail,
       })),
     ];
-  }, [progress, workspaceName, workspaceStatus]);
-
-  const canRetrySetup = workspaceStatus === 'success' && !!setupError;
-
-  if (!ready || !authenticated || workspaceLoading) {
-    return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-2 border-[#0050ff] border-t-transparent" />
-      </div>
-    );
-  }
+  }, [progress, workspaceData?.workspace?.name, workspaceStatus]);
 
   const renderStatusIcon = (status: StepStatus) => {
     switch (status) {
@@ -178,15 +211,31 @@ export default function WelcomePage() {
     }
   };
 
-  // AI Email Introduction View
+  const handleRetry = async () => {
+    startedRef.current = false;
+    setWorkspaceStatus('pending');
+    reset();
+    setIsSetupComplete(false);
+    setShowAiEmailIntro(false);
+    setSetupAttempt((prev) => prev + 1);
+  };
+
+  if (!ready || !authenticated || workspaceLoading) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-2 border-[#0050ff] border-t-transparent" />
+      </div>
+    );
+  }
+
+  // Success view with AI inbox.
   if (showAiEmailIntro) {
     return (
       <section className="relative min-h-screen border-y border-[#101010]/10 bg-white/90 overflow-hidden flex items-center justify-center">
         <GeneratedComponent className="z-0 bg-[#F6F5EF]" />
-        <div className="relative z-10 w-full max-w-[500px] px-4">
+        <div className="relative z-10 w-full max-w-[560px] px-4">
           <div className="bg-white/95 backdrop-blur-sm border border-[#101010]/10 rounded-lg shadow-[0_2px_8px_rgba(16,16,16,0.04)] p-8 sm:p-10">
             <div className="space-y-6">
-              {/* Success Header */}
               <div className="text-center">
                 <div className="mx-auto w-16 h-16 bg-[#10B981]/10 rounded-full flex items-center justify-center mb-4">
                   <CheckCircle2 className="h-8 w-8 text-[#10B981]" />
@@ -195,11 +244,13 @@ export default function WelcomePage() {
                   ACCOUNT READY
                 </p>
                 <h1 className="font-serif text-[32px] sm:text-[40px] leading-[0.96] tracking-[-0.015em] text-[#101010]">
-                  You&apos;re all set!
+                  You are set up.
                 </h1>
+                <p className="mt-3 text-[13px] text-[#101010]/60">
+                  Redirecting you to the dashboard...
+                </p>
               </div>
 
-              {/* AI Email Feature Intro */}
               <div className="bg-[#1B29FF]/5 border border-[#1B29FF]/20 rounded-lg p-5 space-y-4">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center bg-[#1B29FF]/10 rounded-full">
@@ -207,10 +258,10 @@ export default function WelcomePage() {
                   </div>
                   <div>
                     <h3 className="text-[15px] font-medium text-[#101010]">
-                      Meet your AI assistant
+                      Your AI inbox
                     </h3>
                     <p className="text-[12px] text-[#101010]/60">
-                      Manage your finances securely via email
+                      Forward invoices, receipts, and payment requests.
                     </p>
                   </div>
                 </div>
@@ -218,7 +269,7 @@ export default function WelcomePage() {
                 {aiEmailData?.email ? (
                   <div className="space-y-2">
                     <p className="text-[11px] uppercase tracking-[0.12em] text-[#101010]/50">
-                      Your AI Email Address
+                      Email address
                     </p>
                     <div className="flex items-center gap-2">
                       <div className="flex-1 bg-white border border-[#101010]/10 px-4 py-3 rounded">
@@ -227,6 +278,7 @@ export default function WelcomePage() {
                         </code>
                       </div>
                       <button
+                        type="button"
                         onClick={handleCopyEmail}
                         className="h-12 w-12 flex items-center justify-center border border-[#101010]/10 rounded hover:bg-[#F7F7F2] transition-colors"
                         title="Copy email address"
@@ -243,61 +295,31 @@ export default function WelcomePage() {
                   <div className="h-12 animate-pulse bg-[#101010]/5 rounded" />
                 )}
 
-                <div className="space-y-2 pt-2">
-                  <p className="text-[12px] font-medium text-[#101010]/80">
-                    What you can do:
+                <div className="pt-2">
+                  <p className="text-[12px] text-[#101010]/60">
+                    Humans stay in the loop: no payments execute without your
+                    approval.
                   </p>
-                  <ul className="space-y-1.5 text-[12px] text-[#101010]/60">
-                    <li className="flex items-start gap-2">
-                      <span className="text-[#1B29FF] mt-0.5">•</span>
-                      <span>
-                        <strong>Send invoices</strong> — forward emails and
-                        reply YES to send
-                      </span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <span className="text-[#1B29FF] mt-0.5">•</span>
-                      <span>
-                        <strong>Propose payments</strong> — securely request
-                        transfers with human approval
-                      </span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <span className="text-[#1B29FF] mt-0.5">•</span>
-                      <span>
-                        <strong>Attach receipts</strong> — forward documents to
-                        link to transactions
-                      </span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <span className="text-[#1B29FF] mt-0.5">•</span>
-                      <span>
-                        <strong>Check balances</strong> — ask about your account
-                        anytime
-                      </span>
-                    </li>
-                  </ul>
                 </div>
               </div>
 
-              {/* Actions */}
-              <div className="space-y-3">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
                 <button
-                  onClick={handleContinueToDashboard}
-                  className="w-full inline-flex items-center justify-center px-6 py-3 text-[15px] font-medium text-white bg-[#0050ff] hover:bg-[#0040dd] rounded-md transition-colors"
+                  type="button"
+                  onClick={() => router.push('/dashboard')}
+                  className="inline-flex items-center justify-center px-6 py-3 text-[15px] font-medium text-white bg-[#0050ff] hover:bg-[#0040dd] rounded-md transition-colors w-full sm:w-auto"
                 >
                   Continue to Dashboard
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </button>
+                <Link
+                  href="/cli/connect"
+                  className="inline-flex items-center justify-center px-6 py-3 text-[15px] font-medium text-[#0050ff] border border-[#0050ff] hover:bg-[#0050ff]/5 rounded-md transition-colors w-full sm:w-auto"
+                >
+                  Connect the CLI
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Link>
               </div>
-
-              {/* Footer note */}
-              <p className="text-[12px] text-[#101010]/50 text-center">
-                You can always find your AI email address in{' '}
-                <span className="text-[#101010]/70">
-                  Settings → Integrations
-                </span>
-              </p>
             </div>
           </div>
         </div>
@@ -307,195 +329,29 @@ export default function WelcomePage() {
 
   return (
     <section className="relative min-h-screen border-y border-[#101010]/10 bg-white/90 overflow-hidden flex items-center justify-center">
-      {/* Gradient Background - positioned behind content */}
       <GeneratedComponent className="z-0 bg-[#F6F5EF]" />
 
-      {/* Content - positioned above gradient */}
-      <div className="relative z-10 w-full max-w-[500px] px-4">
+      <div className="relative z-10 w-full max-w-[560px] px-4">
         <EnsureEmbeddedWallet />
+
         <div className="bg-white/95 backdrop-blur-sm border border-[#101010]/10 rounded-lg shadow-[0_2px_8px_rgba(16,16,16,0.04)] p-8 sm:p-10">
           <div className="space-y-6">
-            {/* Header */}
             <div>
               <p className="uppercase tracking-[0.14em] sm:tracking-[0.18em] text-[11px] sm:text-[12px] font-medium text-[#101010]/70 mb-3">
-                WELCOME TO ZERO FINANCE
+                SETTING UP
               </p>
-              <h1 className="font-serif text-[36px] sm:text-[44px] leading-[0.96] tracking-[-0.015em] text-[#101010]">
-                Let&apos;s get started
+              <h1 className="font-serif text-[32px] sm:text-[40px] leading-[0.96] tracking-[-0.015em] text-[#101010]">
+                Creating your agent bank
               </h1>
-              <p className="mt-4 text-[15px] sm:text-[16px] leading-[1.5] text-[#101010]/70">
-                Name your workspace to get started. You can create companies and
-                invite team members later.
+              <p className="mt-4 text-[14px] sm:text-[15px] leading-[1.5] text-[#101010]/70">
+                This runs automatically. We will create your secure smart
+                account and prepare your workspace.
               </p>
             </div>
 
-            {/* Form */}
-            <form onSubmit={handleSubmit} className="space-y-6">
-              <div className="space-y-2">
-                <label
-                  htmlFor="workspace-name"
-                  className="block text-[11px] sm:text-[12px] uppercase tracking-[0.14em] text-[#101010]/60 font-medium"
-                >
-                  Workspace Name
-                </label>
-                <input
-                  id="workspace-name"
-                  type="text"
-                  placeholder="e.g., Acme Corp, My Freelance Business"
-                  value={workspaceName}
-                  onChange={(e) => setWorkspaceName(e.target.value)}
-                  disabled={isProcessing || isSetupComplete}
-                  className="w-full h-12 px-4 border border-[#101010]/10 rounded-md text-[15px] sm:text-[16px] text-[#101010] placeholder:text-[#101010]/40 focus:border-[#0050ff] focus:outline-none focus:ring-1 focus:ring-[#0050ff]/20 transition-all disabled:bg-[#F2F2EC] disabled:text-[#101010]/50"
-                  autoFocus
-                />
-                <p className="text-[12px] text-[#101010]/50 mt-1">
-                  This is your personal workspace. You can create company
-                  profiles separately.
-                </p>
-              </div>
-
-              {/* Funding Mode Selection */}
-              <div className="space-y-2">
-                <label className="block text-[11px] sm:text-[12px] uppercase tracking-[0.14em] text-[#101010]/60 font-medium">
-                  How will you fund your account?
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  {/* Bank Transfer Option */}
-                  <button
-                    type="button"
-                    onClick={() => setFundingMode('bank')}
-                    disabled={isProcessing || isSetupComplete}
-                    className={cn(
-                      'relative p-4 rounded-lg border-2 text-left transition-all disabled:opacity-50',
-                      fundingMode === 'bank'
-                        ? 'border-[#0050ff] bg-[#0050ff]/5'
-                        : 'border-[#101010]/10 hover:border-[#101010]/20 bg-white',
-                    )}
-                  >
-                    {fundingMode === 'bank' && (
-                      <div className="absolute top-2 right-2">
-                        <div className="h-4 w-4 rounded-full bg-[#0050ff] flex items-center justify-center">
-                          <svg
-                            className="h-2.5 w-2.5 text-white"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={3}
-                              d="M5 13l4 4L19 7"
-                            />
-                          </svg>
-                        </div>
-                      </div>
-                    )}
-                    <div className="flex items-center gap-2 mb-2">
-                      <Banknote
-                        className={cn(
-                          'h-5 w-5',
-                          fundingMode === 'bank'
-                            ? 'text-[#0050ff]'
-                            : 'text-[#101010]/40',
-                        )}
-                      />
-                      <span className="text-[13px] font-medium text-[#101010]">
-                        Bank Transfer
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-[#101010]/60 leading-[1.4]">
-                      ACH, wire, or SEPA transfers
-                    </p>
-                  </button>
-
-                  {/* Crypto Option */}
-                  <button
-                    type="button"
-                    onClick={() => setFundingMode('crypto')}
-                    disabled={isProcessing || isSetupComplete}
-                    className={cn(
-                      'relative p-4 rounded-lg border-2 text-left transition-all disabled:opacity-50',
-                      fundingMode === 'crypto'
-                        ? 'border-[#1B29FF] bg-[#1B29FF]/5'
-                        : 'border-[#101010]/10 hover:border-[#101010]/20 bg-white',
-                    )}
-                  >
-                    {fundingMode === 'crypto' && (
-                      <div className="absolute top-2 right-2">
-                        <div className="h-4 w-4 rounded-full bg-[#1B29FF] flex items-center justify-center">
-                          <svg
-                            className="h-2.5 w-2.5 text-white"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={3}
-                              d="M5 13l4 4L19 7"
-                            />
-                          </svg>
-                        </div>
-                      </div>
-                    )}
-                    <div className="flex items-center gap-2 mb-2">
-                      <Cpu
-                        className={cn(
-                          'h-5 w-5',
-                          fundingMode === 'crypto'
-                            ? 'text-[#1B29FF]'
-                            : 'text-[#101010]/40',
-                        )}
-                      />
-                      <span className="text-[13px] font-medium text-[#101010]">
-                        Cryptocurrency
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-[#101010]/60 leading-[1.4]">
-                      USDC on Base network
-                    </p>
-                  </button>
-                </div>
-                <p className="text-[11px] text-[#101010]/40 mt-1">
-                  You can change this anytime in Settings → Preferences
-                </p>
-              </div>
-
-              {/* Actions */}
-              <div className="space-y-3">
-                <button
-                  type="submit"
-                  disabled={
-                    !workspaceName.trim() || isProcessing || isSetupComplete
-                  }
-                  className="w-full inline-flex items-center justify-center px-6 py-3 text-[15px] sm:text-[16px] font-medium text-white bg-[#0050ff] hover:bg-[#0040dd] rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isProcessing ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Setting up your account...
-                    </>
-                  ) : isSetupComplete ? (
-                    <>
-                      Redirecting to Dashboard
-                      <Loader2 className="ml-2 h-4 w-4 animate-spin" />
-                    </>
-                  ) : (
-                    <>
-                      Continue to Dashboard
-                      <ArrowRight className="ml-2 h-4 w-4" />
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-
-            {/* Progress */}
             <div className="space-y-3 border border-[#101010]/10 rounded-md px-4 py-4 bg-[#F9F9F3]">
               <p className="text-[12px] uppercase tracking-[0.12em] text-[#101010]/60">
-                Account Setup Progress
+                Setup progress
               </p>
               <ul className="space-y-3">
                 {statusItems.map((item) => (
@@ -507,43 +363,42 @@ export default function WelcomePage() {
                       <p className="text-sm font-medium text-[#101010]">
                         {item.title}
                       </p>
-                      {item.detail && (
+                      {item.detail ? (
                         <p className="text-xs text-[#101010]/70 mt-1">
                           {item.detail}
                         </p>
-                      )}
+                      ) : null}
                     </div>
                   </li>
                 ))}
               </ul>
 
-              {(submissionError || setupError) && (
+              {setupError ? (
                 <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {submissionError || setupError}
+                  {setupError}
                 </div>
-              )}
+              ) : null}
 
-              {isSetupComplete && (
+              {isSetupComplete ? (
                 <div className="rounded-md border border-[#0050ff]/20 bg-[#EAF0FF] px-3 py-2 text-sm text-[#0038cc]">
-                  All set! Redirecting you to the dashboard.
+                  All set. Redirecting...
                 </div>
-              )}
-
-              {canRetrySetup && (
-                <button
-                  type="button"
-                  onClick={handleRetry}
-                  className="w-full inline-flex items-center justify-center px-4 py-2 text-sm font-medium text-white bg-[#101010] hover:bg-[#040404] rounded-md transition-colors"
-                >
-                  Retry setup
-                </button>
-              )}
+              ) : null}
             </div>
 
-            {/* Footer note */}
-            <div className="pt-4 border-t border-[#101010]/10">
-              <p className="text-[12px] sm:text-[13px] text-[#101010]/50 text-center">
-                You can update workspace settings and create companies anytime
+            {!isProcessing && (workspaceStatus === 'error' || !!setupError) ? (
+              <button
+                type="button"
+                onClick={handleRetry}
+                className="w-full inline-flex items-center justify-center px-4 py-2 text-sm font-medium text-white bg-[#101010] hover:bg-[#040404] rounded-md transition-colors"
+              >
+                Retry setup
+              </button>
+            ) : null}
+
+            <div className="pt-2">
+              <p className="text-[12px] text-[#101010]/50 text-center">
+                If this takes more than a minute, keep this tab open.
               </p>
             </div>
           </div>

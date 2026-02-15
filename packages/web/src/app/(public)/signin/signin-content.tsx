@@ -43,17 +43,18 @@ interface SigninContent extends SigninContentBase {
 }
 
 const SIGNIN_CONTENT: SigninContent = {
-  badge: 'Business Savings Account',
+  badge: 'AI-Powered Finance',
   headline: {
-    prefix: 'Get paid on your',
-    highlight: 'idle treasury',
+    prefix: 'Your finances,',
+    highlight: 'on autopilot',
     suffix: '',
   },
-  description: 'Earn more on your idle treasury. No minimums, no lock-ups. ',
+  description:
+    'Forward invoices and receipts, approve payments, and automate transfers from your inbox or the CLI.',
   features: [
-    'Insurance included — up to $1M coverage',
-    'Instant withdrawals — no lockups',
-    'ACH and wire transfers in and out',
+    'Email receipts + invoices - AI matches them automatically',
+    'Natural language commands - "Pay Acme $5,000 for hosting"',
+    'CLI + MCP - connect agent-bank to program approvals',
   ],
 };
 
@@ -298,12 +299,12 @@ export default function SignInContent() {
             <div className="space-y-6">
               <div className="text-center">
                 <h2 className="text-[24px] font-semibold tracking-[-0.01em] text-[#101010] mb-2">
-                  {inviteToken ? 'Accept invitation' : 'Open your account'}
+                  {inviteToken ? 'Accept invitation' : 'Sign in'}
                 </h2>
                 <p className="text-[14px] text-[#101010]/70">
                   {inviteToken
                     ? 'Sign in to join your company'
-                    : 'Enter your email to get a 6-digit sign-in code.'}
+                    : 'Enter your email for a 6-digit code. We will set up your workspace automatically.'}
                 </p>
               </div>
 
