@@ -10,15 +10,16 @@ import type { Metadata } from 'next';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: '0 Finance - AI-powered finance, on autopilot',
+  title: '0 Finance - CLI-first banking for AI agents',
   description:
-    'Stop doing finance manually. Forward invoices and receipts, approve payments, and automate bank transfers with an AI that asks before executing. Install the agent-bank CLI and connect via MCP.',
+    'CLI-first bank account for AI agents. Script invoices and propose ACH/IBAN transfers from the `zero` CLI, then approve sensitive actions in the companion web app. Connect via MCP to use 0 Finance inside any assistant.',
   keywords: [
-    'ai finance',
     'agent banking',
+    'cli banking',
+    'banking primitives',
     'finance automation',
+    'zero cli',
     'invoices',
-    'expense tracking',
     'bank transfers',
     'approvals',
     'mcp',
@@ -51,9 +52,9 @@ export const metadata: Metadata = {
     ],
   },
   openGraph: {
-    title: '0 Finance - AI-powered finance, on autopilot',
+    title: '0 Finance - CLI-first banking for AI agents',
     description:
-      'Forward invoices and receipts, approve payments, and automate transfers with an AI that asks before executing. CLI + MCP included.',
+      'Script invoices and propose transfers from the `zero` CLI, then approve sensitive actions in the companion web app. CLI + MCP included.',
     url: 'https://0.finance',
     siteName: '0 Finance',
     images: [
@@ -61,7 +62,7 @@ export const metadata: Metadata = {
         url: 'https://0.finance/opengraph-image.png',
         width: 1200,
         height: 630,
-        alt: '0 Finance - AI-powered finance, on autopilot',
+        alt: '0 Finance - CLI-first banking for AI agents',
       },
     ],
     locale: 'en_US',
@@ -69,9 +70,9 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: '0 Finance - AI-powered finance, on autopilot',
+    title: '0 Finance - CLI-first banking for AI agents',
     description:
-      'Forward invoices and receipts, approve payments, and automate transfers with an AI that asks before executing. CLI + MCP included.',
+      'Script invoices and propose transfers from the `zero` CLI, then approve sensitive actions in the companion web app. CLI + MCP included.',
     site: '@0finance',
     creator: '@0finance',
     images: ['https://0.finance/opengraph-image.png'],
