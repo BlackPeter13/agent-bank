@@ -19,7 +19,15 @@ The CLI binary is `zero` (alias: `zero-bank`).
 ## Quick start
 
 ```bash
-# Authenticate
+# Authenticate (agent-native, API-only)
+zero auth agentlogin \
+  --email finance-agent@acme.com \
+  --company-name "Acme Inc" \
+  --admin-token $ZERO_FINANCE_ADMIN_TOKEN
+
+# Note: defaults to creating one Ethereum wallet when wallets are not specified
+
+# Or browser login for humans
 zero auth connect
 
 # Or: zero auth login --api-key sk_live_xxx
@@ -38,6 +46,7 @@ zero invoices send --invoice-id inv_xxx
 
 ## Common commands
 
+- `zero auth agentlogin` — Privy + API key provisioning over API
 - `zero auth connect` — browser-based login
 - `zero auth login` — store API key manually
 - `zero balance` — spendable, earning, and idle balances
